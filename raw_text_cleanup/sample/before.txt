@@ -1,0 +1,782 @@
+JMLR: Workshop and Conference Proceedings 1: 1-16
+
+Gaussian Processes in Practice
+
+Gaussian Process Approximations of Stochastic Differential Equations
+
+C´edric Archambeau Department of Computer Science, University College London Gower Street, London WC1E 6BT, United Kingdom
+Dan Cornford Neural Computing Research Group, Aston University Aston Triangle, Birmingham B4 7ET, United Kingdom
+Manfred Opper Artificial Intelligence Group, Technical University Berlin Franklinstraße. 28/29, D-10587 Berlin, Germany
+John Shawe-Taylor Department of Computer Science, University College London Gower Street, London WC1E 6BT, United Kingdom
+
+c.archambeau@cs.ucl.ac.uk d.cornford@aston.ac.uk opperm@cs.tu-berlin.de jst@cs.ucl.ac.uk
+
+Editor: Neil D. Lawrence, Anton Schwaighofer and Joaquin Quin~onero Candela
+
+Abstract
+Stochastic differential equations arise naturally in a range of contexts, from financial to environmental modeling. Current solution methods are limited in their representation of the posterior process in the presence of data. In this work, we present a novel Gaussian process approximation to the posterior measure over paths for a general class of stochastic differential equations in the presence of observations. The method is applied to two simple problems: the Ornstein-Uhlenbeck process, of which the exact solution is known and can be compared to, and the double-well system, for which standard approaches such as the ensemble Kalman smoother fail to provide a satisfactory result. Experiments show that our variational approximation is viable and that the results are very promising as the variational approximate solution outperforms standard Gaussian process regression for non-Gaussian Markov processes.
+Keywords: Dynamical Systems, Stochastic Processes, Bayesian Inference, Gaussian Processes
+
+1. Introduction
+Stochastic differential equations are used in a wide range of applications in environmental modeling, engineering and biological modeling. They typically describe the time dynamics of the evolution of a state vector, based on the (approximate) physics of the real system, together with a driving noise process. The noise process can be thought of in several ways. It often represents processes not included in the model, but present in the real system. In our work we are motivated by problems arising in numerical weather prediction models, however the methods we are developing have a far more general relevance.
+c 2007 C. Archambeau, D. Cornford, M. Opper and J. Shawe-Taylor.
+
+Archambeau, Cornford, Opper and Shawe-Taylor
+To provide a brief insight into the motivation for our work, we consider numerical weather prediction models, which are based on a discretization of a coupled set of partial differential equations (the dynamics) which govern the time evolution of the atmosphere, described in terms of temperature, pressure, velocity, etc. (Haltiner and Williams, 1980). However, the dynamics do not include all the physical processes acting in the atmosphere such as radiation and clouds, so these are included, often as empirical parametrizations (the model physics). These dynamical models typically have state vectors with dimension O(106) and are currently treated as deterministic models, although there is increasing recognition that a full stochastic treatment is necessary for progress to be made on probabilistic weather forecasting (Seiffert et al., 2006). This work is the first step in a move towards methods that will be able to treat such large, complex models in a fully probabilistic framework. A particular issue we address in this paper is the use of observations, together with dynamics defined by a stochastic differential equation to infer the posterior distribution of the state of the system, a process often referred to in meteorology as data assimilation (Kalnay, 2003). We do not review data assimilation methods extensively here, but note that recently much work has been done to address the issue of the propagation of the uncertainty at initial time through the nonlinear model equations. The most popular sequential method is called the ensemble Kalman filter, a simplified Monte Carlo approach (Evensen and van Leeuwen, 2000; Whitaker and Hamill, 2002), whereas more advanced techniques include Bayesian sequential MCMC methods (Golightly and Wilkinson, 2006). A widely used alternative to sequential treatments of the data assimilation problem is the so called 4DVAR method which seeks to find the most probable model trajectory over a given time window, typically using the model equations as a strong constraint, using a simple variational approach (Courtier et al., 1994).
+In this work we seek a variational Bayesian treatment of the dynamic data assimilation problem. In particular, we focus on the issue of defining a Gaussian process approximation to the temporal evolution of the solution of a general stochastic differential equation with additive noise, and the posterior approximation given the observations. We expect the variational nature of this approximation to make it possible for us to apply these methods to very large models, by exploiting localization, hierarchical models and sparse representations (Seeger et al.). We present the results of our initial work, which focuses on theoretical developments. These are applied to two commonly used stochastic processes, the OrnsteinUhlenbeck process and the noisy double well system, to illustrate their application. Further work is required before these ideas can be applied to complex models, such as those used in weather forecasting.
+The issues and contributions raised by this work are as follows. If we want to do the modeling properly, we have to take into account that in general the prior process is a nonGaussian process. Therefore, we cannot deal with the prior in an efficient way just as we cannot deal with the posterior. Thus this work is significantly different from the Gaussian process methods recently extensively studied in Machine Learning (see for example Csato´ and Opper, 2002; Seeger, 2004). To be more specific, we cannot compute any prior moment or marginal exactly. When the process is Markovian (not necessarily time-homogeneous), any marginal can be expressed as the product of the transition probabilities. Even for the prior, this would require the solution of a Fokker-Planck equation, which is a partial differential equation. For almost all realistic problems, the solution of the corresponding
+2
+
+Gaussian Process Approximations of Stochastic Differential Equations
+
+exact Fokker-Planck equation is in practice impossible, so we need to make approximations (Risken, 1989). Making approximations to solve very difficult problems is not a new idea in Machine Learning. However, because we can always explicitly compute all prior marginals (at observations and test points) for a Gaussian process (Csat´o and Opper, 2002), essentially nearly all current work in this direction boils down to the approximation of a multivariate (but finite dimensional) posterior density. Thus, the important feature that a process is infinite dimensional almost never plays a role in inference. In this work, things are different.
+As in many areas of Machine Learning, we are using the variational method of approximating an intractable probability distribution by a tractable one (Jaakkola, 2001; Beal, 2003; Winn, 2003). In contrast to most other works, a factorizing density does not seem to make sense in an infinite setting. We are thus working with Gaussian variational densities. This has mostly been ignored in the Machine Learning literature. The Kullback-Leibler (KL) divergence (Kullback and Leibler, 1951) between the approximating posterior process and the exact one is one between processes (i.e., between probability measures over paths) which makes the computation non-trivial. In the field of data assimilation such a setting is not new and there has been some work done for computing approximate predictions (Eyink et al., 2004; Apte et al., 2006). These papers, however, do not provide a natural framework for estimating unknown model parameters, while we can attempt this by a variational bound for the probability of observed data which can be used within a maximum likelihood framework.
+We start, in Section 2, with a review of the basic setting in which we are working. In Section 3 we develop the variational approximation methods for the general class of problems introduced in Section 2. We show how to compute the divergence between the true processes, and the approximate Gaussian process and derive expressions for the posterior moments of the approximating process. We use these expressions to derive the relevant Euler-Lagrange equations for the problem. In Section 3.2 we show how the variational approximation can be used in a smoother algorithm to approximate the conditional distribution of the state given a series of observations within a certain time frame, and the process stochastic differential equation. Section 4 show results of applying the method to two example problems: an Ornstein-Uhlenbeck process and the noisy double well system. We conclude in Section 5.
+
+2. Basic setting
+
+Consider a finite set of d-dimensional noisy observations {yn}Nn=1 of a D-dimensional hidden state x(t). It is assumed that the time evolution of x(t) is described by an (Ito) stochastic
+
+differential equation (SDE): 
+dx(t) = f (x)dt +  dW(t)
+
+(1)
+
+where for simplicity, we assume that  = diag{12, . . . , D2 } is diagonal, with f (x) a nonlinear function and dW(t) a standard (multivariate) Wiener process.
+
+We do not attempt any rigorous presentation of such processes (which would involve
+
+proper Ito-calculus) in this paper, but rather resort to an intuitive picture where we under-
+
+stand such a process as an appropriate limit of a discrete time process xk. To be precise,
+
+we use the Euler-Maruyama representation of (1): 
+xk  xk+1 - xk = f (xk)t + t  k .
+
+(2)
+
+3
+
+Archambeau, Cornford, Opper and Shawe-Taylor
+
+t is the time increment and k denotes a sequence of independent Gaussian random vectors k  N (0, I). Note that the the noise scales with t, which is necessary to obtain the non-trivial limit of a diffusion process. Such stochastic processes are widely used in physics and finance to model continuous random systems that evolve continuously over time (e.g., Brownian motion and other diffusions). In fact, it can be viewed as a limiting case of a random walk as the time increment goes to zero. The non-trivial scaling also prohibits us from writing the SDE using ordinary derivatives, because sample paths are continuous but not differentiable with probability one. Note that this form can be used for approximate (in the sense of discretizing a differential equation) generation of samples from the (prior) process (Kloeden and Platen, 1992, ch. 9).
+The process x(t) is a continuous time, but, unfortunately, non-Gaussian (if f (x) is nonlinear) Markov process. It is not required that this process is time-homogeneous. It defines a probability measure psde over paths {x(t)}tI , where I = [0, T ] is a time interval over which we would like to perform our inference.
+As usual, in the presence of observations, the posterior measure is given by
+
+dppost dpsde
+
+=
+
+1 Z
+
+N
+× p(yn|x(tn)),
+n=1
+
+(3)
+
+where y1:N = (y1, . . . , yN ) are observed at the discrete times {t1, . . . , tN } and Z is the normalizing constant. The likelihood p(yn|xn) is assumed to have the form of a multivariate Gaussian density:
+
+p(yn|x(tn)) = N (yn|Hx(tn), R),
+
+(4)
+
+where H  Rd×D defines a linear transformation and R  Rd×d is the noise covariance matrix. In future work we will generalize this to arbitrary nonlinear observations operators h(x(t)).
+
+3. Variational approximation
+
+We consider the approximation of the true posterior measure by a Gaussian measure (i.e.,
+
+by a Gaussian process), such that the KL divergence between the two is minimized. We will
+
+construct such a measure by the following idea: since the posterior process is Markovian,
+
+we will also use a Gaussian Markov process as its approximation. The assumption of
+
+Gaussianity implies that such a process must be governed by a linear SDE:
+
+ dx(t) = fL(x, t)dt +  dW(t),
+
+(5)
+
+where
+
+fL(x, t) = -A(t)x(t) + b(t).
+
+(6)
+
+The matrix A(t)  RD×D and the vector b(t)  RD are functions to be optimized in the variational approach. They must be time dependent to account for the non-stationarity in the process caused by the observations. Note, that the use of the same noise variance 
+
+4
+
+Gaussian Process Approximations of Stochastic Differential Equations
+
+for both processes is not a restriction, because a different choice would lead to infinite KL divergences.
+The KL divergence of the two measures over the time interval [0, T ] is computed in Appendix A, giving
+
+with
+
+KL [q ppost] =
+
+dq dq ln =
+
+T E(t)dt + N d ln(2) + N ln |R| + ln Z,
+
+dp 0
+
+22
+
+(7)
+
+E(t) = Esde(t) + Eobs(t)
+
+and
+
+1 Esde(t) = 2
+
+(f (x) - fL(x, t))T-1(f (x) - fL(x, t)) qt ,
+
+1N Eobs(t) = 2
+
+(yn - Hx(t))TR-1(yn - Hx(t)) qt (t - tn),
+
+n=1
+
+(8) (9)
+
+where (t) is the Dirac function and · qt indicates the expectation with respect to the marginal distribution qt of the process at time t. As usual, the fact that KL [q ppost]  0 gives an upper bound on - ln Z. So far, we have not used the assumption that fL is linear.
+
+3.1 Gaussian Process posterior moments
+To evaluate the expression of the KL divergence and to permit its subsequent minimization, we need the functional dependency on the variational parameter functions A(t) and b(t)) of the marginal distributions of the process q at any time t. For a Gaussian (i.e. fixed form) variational q, we can write
+
+qt(x) = N (x|m(t), S(t)).
+
+(10)
+
+One might expect that the time evolution of qt(x) can be described by a set of ordinary differential equations (ODEs) for the mean m(t) and the covariance matrix S(t). As shown in Appendix B these are given by
+
+dm = -A(t)m(t) + b(t), dt dS = -A(t)S(t) - S(t)AT(t) + . dt
+
+(11) (12)
+
+3.2 Variational approximation of the posterior
+
+In order to compute the parameters and the required moments, we minimize the KL divergence (7) subject to the constraints (11) and (12), with respect to independent variations of A(t), b(t), m(t) and S(t). Therefore, we look for the stationary points of the following Lagrangian:
+
+T
+
+L=
+
+E - tr
+
+
+
+dS dt
+
++
+
+AS
+
++
+
+SAT
+
+-
+
+
+
+- T
+
+dm dt
+
++
+
+Am
+
+-
+
+b
+
+dt
+
+0
+
+(13)
+
+5
+
+Archambeau, Cornford, Opper and Shawe-Taylor
+
+where (t)  RD×D and (t)  RD are Lagrange multipliers. Note that matrix  is symmetric. To allow for an explicit variation, we perform an integration by parts, which gives
+
+T
+
+L=
+
+E - tr  AS + SAT - 
+
+- T (Am - b) + tr
+
+d dt
+
+S
+
++
+
+dT dt
+
+m
+
+dt
+
+0
+
+- tr {(T )S(T )} + tr {(0)S(0)} - T(T )m(T ) + T(0)m(0).
+
+(14)
+
+At the latest time we only take variations with respect to A(T ) and b(T ), such that (T ) = 0 and (T ) = 0. For simplicity, we also fix the values of S(0) and m(0) rather than optimizing them. Hence, taking the derivatives of L with respect to A, b, S and m leads respectively to the following Euler-Lagrange equations:
+
+E - 2S - mT = 0, A E
++  = 0, b E - 2A + d = 0, S dt E - AT + d = 0. m dt
+
+(15) (16) (17) (18)
+
+It follows from (15) and (16) that the variational functions A(t) and b~(t) at each time can be expressed as a function of the Lagrange multipliers (t) and (t), as well as the moments m(t) and S(t):
+
+A(t) = - f + 2(t), x qt
+b~(t) = f (x) qt + A(t)m(t) - (t),
+
+(19) (20)
+
+where we have used the fact that
+
+xxT qt = mmT + S and
+
+f (x)(x - m)T qt =
+
+f x
+
+qt S
+
+for any Gaussian qt, along with the following results:
+
+E = -1 A
+
+f (x)xT qt + A xxT qt - b xT qt
+
+E = --1 b
+
+f (x) qt + A x qt - b .
+
+,
+
+(21) (22)
+
+Smoothing algorithm
+We propose the following smoothing algorithm. Make some initial guesses for A(t) and b(t) and choose a sufficiently small relaxation parameter .
+Repeat until the KL reaches its minimum value:
+
+1. Solve (11) and (12) forward in time for fixed variational parameters A(t) and b(t), as well as fixed (t) and (t).
+
+6
+
+Gaussian Process Approximations of Stochastic Differential Equations
+
+2. With m(t) and S(t) found for 0  t  T , solve backward in time with (T ) = 0 and (T ) = 0:
+
+d = 2(t)A(t) - Esde , dt S d = AT(t)(t) - Esde . dt m
+
+(23) (24)
+
+When there is an observation, use the following jump-conditions:
+
+(t+n )
+
+=
+
+(t-n )
+
+-
+
+1 HTR-1H, 2
+
+(tn+) = (t-n ) + HTR-1(yn - Hm(tn)).
+
+(25) (26)
+
+The amplitude of the jumps are found by evaluating the derivatives of Eobs with respect to S and m at time t.
+Meanwhile, update the variational parameters as follows:
+
+A(t)  A(t) - {A(t) - A(t)}, b(t)  b(t) - {b(t) - b~(t)},
+
+(27) (28)
+
+where 0 <   1.
+
+The underlying motivation for using the updates (27) and (28) rather than directly using (19) and (20) is to avoid numerical instabilities due to possibly too large update steps.
+If d  D, then the complexity of the smoothing algorithm is O(KM D3), where K is the number of sweeps (or iterations) and M = T /dt.
+
+4. Experiments
+In this section, the approach is validated on two 1-dimensional examples: the OrnsteinUhlenbeck (OU) process and the double-well (DW) system. The OU process is a mathematical model of the velocity of a particle undergoing Brownian motion (Uhlenbeck and Ornstein, 1930). It is here considered as a reference example. Actually, we know the exact solution for the kernel covariance function, which is induced by the corresponding prior Gaussian Markov process. One can thus perform standard Gaussian Process (GP) regression (Rasmussen and Williams, 2006, ch. 2) for computing the posterior process. The variational approximation leads in this case to the same exact result. By contrast, the DW system is a standard data assimilation benchmark (see Miller et al., 1994; Eyinck and Restrepo, 2000). Its prior Markov process is non-Gaussian as there are two equally likely equilibria, resulting in psde being bimodal. Therefore, the posterior process is necessarily non-Gaussian, but can be well approximated by a Gaussian one given appropriate observations.
+
+4.1 Ornstein-Uhlenbeck process The SDE of the Ornstein-Uhlenbeck (OU) process is defined as follows:
+dx = -xdt + 2dW,
+
+(29)
+
+7
+
+Archambeau, Cornford, Opper and Shawe-Taylor
+
+where  is the drift parameter. The induced stationary covariance kernel is given by
+
+K(t, t ) = 2 e-|t-t |. 2
+
+(30)
+
+This kernel can be plugged into the GP regression formulae to compute the exact posterior process and make prediction on unseen data.
+Next, let us consider the approximation of the scalar SDE defined by the linear function fL(x, t) = -x + . The variational fixed points parameters are given by
+
+ =  + 22,  = ( - )m - 2,
+
+(31) (32)
+
+where (t) and (t) denote the scalar Lagrange multipliers. The parameters are updated after each set of forward and backward passes.
+The forward pass consists in propagating the mean and the variance using the discretized Euler-Lagrange equations corresponding to (11) and (12). The backward pass uses the discretized ODEs of the Lagrange multipliers, along with the jump conditions:
+
+(tn+)
+
+=
+
+(tn-)
+
+-
+
+1 22
+
+,
+
+(tn+)
+
+=
+
+(tn-)
+
++
+
+1 2
+
+(yn
+
+-
+
+m(tn)).
+
+(33) (34)
+
+The specific OU ODEs are given by
+
+d dt
+
+=
+
+2
+
+-
+
+dEsde ds2
+
+,
+
+d =  - dEsde , dt dm
+
+(35) (36)
+
+where
+
+Esde
+
+=
+
+(-)2 22
+
+x2
+
+qt
+
+-
+
+(- 2
+
+)
+
+m
+
++
+
+2 22
+
+.
+
+Figure 1 shows a realization of the OU process and compares the posterior solution
+
+found by GP regression and the variational method. The true states are corrupted by zero-
+
+mean Gaussian noise. The noise levels are assumed to be known. Observe how the resulting
+
+smoothers are identical, except at the first observation where we have set m(0) = y0 and s(0) = y2 for initializing the smoothing algorithm. Figure 2 shows the time evolution of the
+variational parameters and the Lagrange multipliers after convergence. Due to the jump
+
+conditions, the value of the Lagrange multipliers jumps when there are observations, as does
+
+the value of the variational parameters. Nevertheless, the posterior process is smooth and
+
+continuous over time (but not differentiable at times where there are observations).
+
+4.2 Double-well system
+The second example that we consider is the double-well system, which is highly nonlinear. The force f arises from a double-well potential u(x) = -2x2 + x4. The SDE is given by
+
+dx = f dt + 2dW,
+
+(37)
+
+8
+
+Gaussian Process Approximations of Stochastic Differential Equations
+
+(a) GP regression.
+
+(b) Variational approximation.
+
+Figure 1: Ornstein-Uhlenbeck example. The true process is indicated in grey and the noisy observations are marked by crosses. The left panel shows the expected posterior process (solid) and the 1-standard deviation tube (dashed) obtained by GP regression, while the right one shows the same quantities obtained by the Gaussian variational approximation.
+
+Figure 2: Variational parameters and Lagrange multipliers vs. time. 9
+
+Archambeau, Cornford, Opper and Shawe-Taylor
+
+where f (x) =
+
+du(x) dx
+
+= 4x(1 - x2).
+
+Due to the driving noise, the solution x(t) fluctuates
+
+around one of the two minima located at ±1. Occasionally, however, larger fluctuations
+
+arise, possibly leading to the transition to the other well. Therefore, the associated Markov
+
+process is non-Gaussian.
+
+For the fixed point variational parameters of the approximate SDE, we have
+
+ = -4(1 - 3m2 - 3s2) + 22,  = -4 x3 qt + (4 + )m - 2. The ODEs describing the time evolution of the Lagrange multipliers are then
+
+(38) (39)
+
+d dt
+
+=
+
+2
+
+-
+
+dEsde ds2
+
+,
+
+d =  - dEsde , dt dm
+
+(40) (41)
+
+where
+
+Esde
+
+=
+
+8 2
+
+x6
+
+qt -
+
+4(4+) 2
+
+x4
+
+qt +
+
+4 2
+
+x3
+
+qt
+
++
+
+(4+)2 22
+
+x2
+
+qt
+
+-
+
+(4+) 2
+
+m
+
++
+
+2 22
+
+.
+
+The
+
+jump conditions are given by (33) and (34).
+
+In the experiments we consider the same sample as the one considered by Miller et al.
+
+(1994); Eyink et al. (2004) and the parametrization is identical: the time step t is equal
+
+to 0.01; there are 7 noisy observations in the time window; the variance of the observation noise is equal to 0.04 and the driving noise 2 is equal to 0.5. Also, only one transition
+
+occurs in the time window.
+
+First, we compare the variational solution to the one obtained by GP regression using
+
+the OU kernel and the standard RBF kernel (see Figure 3). The observation noise is set
+
+to its true value. The OU drift parameter and the RBF kernel width are selected as the
+
+ones maximizing the evidence, that is the marginal probability of the observations. Both
+
+regressors are able to locate the transition. However, they are not able to estimate the
+
+wells accurately. Note also how the GP using the OU kernel overestimates the posterior
+
+covariance. These results are not surprising as the GPs do not make use of the knowledge
+
+of the dynamics and assume the observation noise is small. By contrast, the variational
+
+solution is expected to be much closer to the true posterior process. Indeed, a good solution
+
+needs not necessarily to be closer to the true history, but to its most probable value. The
+
+noise tube is also more informative in this case. Qualitatively, this solution is the same as
+
+the one obtained by Eyink et al. (2004), who recently introduced an alternative mean field
+
+approximation approach to data assimilation. These authors also noted that the popular
+
+ensemble Kalman smoother fails to correctly locate the transition (Eyinck et al., 2006). As
+
+a matter of fact, it lags by one measurement and this failure is not cured by the backward
+
+pass.
+
+Figure 4 shows the evolution of the KL divergence as a function of the number of
+
+sweeps for different values of the under-relaxation parameter , which has an effect on
+
+the convergence rate. The higher it is the faster the algorithm converges. However, when
+
+too large, numerical instabilities may occur leading to the smoothing algorithm to diverge.
+
+For reasonable values of  the algorithm converges relatively fast, that is in less than 100
+
+sweeps. Finally, note that the evolution of the Lagrangian is identical to the evolution of
+
+the KL as a function of the number of sweeps. This can be understood by noticing that the
+
+constraints (11) and (12) are satisfied by construction after each forward sweep.
+
+10
+
+Gaussian Process Approximations of Stochastic Differential Equations
+
+2 1.5
+1 0.5
+0 !0.5
+!1 !1.5
+!20 1 2 3 4 5 6 7 8
+(a) GP with the OU kernel.
+2 1.5
+1 0.5
+0 !0.5
+!1 !1.5
+!20 1 2 3 4 5 6 7 8
+(c) Variational approximation.
+
+2 1.5
+1 0.5
+0 !0.5
+!1 !1.5
+!20 1 2 3 4 5 6 7 8
+(b) GP with the RBF kernel.
+2 1.5
+1 0.5
+0 !0.5
+!1 !1.5
+!20 1 2 3 4 5 6 7 8
+(d) Sample path.
+
+Figure 3: Double-well system. (a) and (b) show the GP regression solution for two different kernels while (c) is the optimal variational solution. (d) Shows the true history (or sample path). The solid lines are the posterior means and the dashed ones the posterior means ± the posterior 1-standard deviation.
+
+11
+
+Archambeau, Cornford, Opper and Shawe-Taylor
+
+KL
+
+!400 !420 !440 !460 !480 !500 !520 !540 !560 !580 !600
+0
+
+50 100
+Number of iterations
+
+150
+
+Figure 4: Double-well system. Evolution of the KL divergence as a function of the number of iterations (i.e. sweeps) for different values of the under-relaxation parameter (solid:  = 0.5; dash:  = 0.25; dash-dot:  = 0.1; dot:  = 0.05).
+
+5. Conclusion
+In this paper we have introduced a novel variational approximation to the posterior distribution of a system governed by a general stochastic differential equation. The main innovation of the work is that the posterior distribution is over paths, rather than a finite dimensional multivariate posterior as in standard Gaussian process inference. We have shown how to incorporate observations into the approximation scheme, proposing a smoothing algorithm. Results of applying the method to two example systems are very promising. On the one hand, the approach is consistent, i.e. the variational solution is identical to the exact solution when the stochastic process is a Gaussian one. On the other hand, the method is able to cope with strongly nonlinear systems (for example inducing multimodal probability measures), in contrast to most approximate state-of-the-art techniques.
+This work represents an initial step towards the application of variational Bayesian inference methods to general stochastic differential equation based models. Much remains to be done to enable us the apply these methods to the very large, complicated models used in weather forecasting (see for example Dance, 2004, for a discussion of current issues). Future work will explore further the links between our methods and the cutting edge data assimilation methods developped by Eyink et al. (2004); Apte et al. (2006) and will focus on a better smoothing algorithm. One area we expect to make progress in is the application of our methods to spatially distributed systems since we are able to control the complexity of the posterior approximation by defining the class and representations of linear models, fL(x, t) used in our method, for example by constraining -A(t) to have some simplified
+12
+
+Gaussian Process Approximations of Stochastic Differential Equations
+
+form, such as a sparse representation or a tri-diagonal form. Another interesting application of our methods would be to situations where the system model f (x, t) is known only approximately, but the magnitude of the model errors is not well known; employing our variational framework would allow us to make inference of the model error, represented by , which would produce better estimates of the posterior uncertainty after data assimilation.
+
+Acknowledgments
+We would like to thank the organizers of the Gaussian Processes in Practice meeting for putting together such an interesting workshop and providing us with the opportunity to present this work. We would also like to thank Hauke Tschach for checking the equations in the experimental part. This work has been funded by the EPSRC as part of the Variational Inference for Stochastic Dynamic Environmental Models (VISDEM) project (EP/C005848/1).
+
+Appendix A. Kullback-Leibler divergence along a state path
+
+To derive the result for the KL divergence, we use the following discrete time heuristics (a
+
+derivation in continuous time using Girsanovs theorem (Kloeden and Platen, 1992) will be
+
+given elsewhere): Consider the discretized version (2) of the SDE (1) and the corresponding
+
+version for the approximate linear one (5):
+
+
+
+xk  xk+1 - xk = f (xk)t +
+
+t 
+
+k,
+
+xk  xk+1 - xk = fL(xk, tk)t + t k,
+
+(42) (43)
+
+where k is drawn from a multivariate Gaussian density with identity covariance. Hence, the probability density of a discrete time path, i.e. a sequence x1:K = (x1, . . . , xK)
+generated by the true prior process (i.e., without observations) and the approximate process
+posterior are respectively given by
+
+K -1
+p(x1:K ) = N (xk+1|xk + f (xk)t, t),
+k=1 K -1
+q(x1:K ) = N (xk+1|xk + fL(xk, tk)t, t).
+k=1
+
+The KL divergence between q(x1:K ) and p(x1:K ) is given by
+
+KL [q(x1:K ) psde(x1:K )] =
+
+dx1:K
+
+q(x1:K ) ln
+
+q(x1:K ) p(x1:K )
+
+K -1
+=
+k=1
+
+dxk q(xk)
+
+dxk+1
+
+q(xk+1|xk) ln
+
+q (xk+1 |xk ) p(xk+1 |xk )
+
+1 K-1 =
+2
+k=1
+
+dxk q(xk) (f - fL)T-1(f - fL)t,
+
+(44) (45)
+(46)
+
+13
+
+Archambeau, Cornford, Opper and Shawe-Taylor
+
+where we have used the fact that xk|xk q = fL(xk, tk)t. It is possible to pass to the continuum limit t  0 on the time interval [0, T ], because all terms have the ordinary linear scaling with t of Riemann sums. It can be shown that if we had not assumed that both processes have the same noise variance , the corresponding sum would have diverged.
+Hence, in the limit, we obtain the KL divergence between the two probability measures for state paths in this time interval:
+
+1 KL [q psde] = 2
+
+T 0
+
+(f - fL)T-1(f - fL) qt dt,
+
+(47)
+
+where · qt indicates the expectation with respect to qt(x), which is the marginal density of x at time t.
+
+Appendix B. Ordinary differential equations for the GP parameters
+The ODEs of the means (11) and the covariance matrices (12) follow from (5) when neglecting terms beyond first order in dt:
+
+dm(t) = E{x + dx} - E{x} = -A(t)m(t) dt + b(t) dt,
+dS(t) = E{(x - m + dx - dm)(x - m + dx - dm)T} - E{(x - m)(x - m)T} = -A(t)S(t) dt - S(t)AT(t) dt +  dt + O(dt2),
+
+(48) (49)
+
+where we have used the fact that W(t) is a Wiener process, such that E{dW(t)} = 0 and E{dW(t)dWT(t)} = dtI.
+
+References
+Amit Apte, Martin Hairer, Andrew Stuart, and Jochen Voss. Sampling the posterior: An approach to non-Gaussian data assimilation. Physica D, 2006. Submitted, available from http://www.maths.warwick.ac.uk/stuart/sample.html.
+Matthew J. Beal. Variational Algorithms for Approximate Bayesian Inference. PhD thesis, Gatsby Computational Neuroscience Unit, University College, London, UK, 2003.
+P. Courtier, J. N. Thepaut, and A. Hollingsworth. A strategy for operational implementation of 4D-VAR, using an incremental approach. Quarterly Journal of the Royal Meteorological Society, 120:1367­1387, 1994.
+Lehel Csat´o and Manfred Opper. Sparse on-line Gaussian processes. Neural Computation, 14(3):641­669, 2002.
+Sarah L. Dance. Issues in high resolution limited area data assimilation for quantitative precipitation forecasting. Physica D, 196:1­27, 2004.
+Geir Evensen and Peter J. van Leeuwen. An ensemble Kalman smoother for nonlinear dynamics. Monthly Weather Review, 128:1852­1867, 2000.
+
+14
+
+Gaussian Process Approximations of Stochastic Differential Equations
+Gregory L. Eyinck and Juan R. Restrepo. Most probable histories for nonlinear dynamics: tracking climate transitions. Journal of Statistical Physics, 101:459­472, 2000.
+Gregory L. Eyinck, Juan L. Restrepo, and Francis J. Alexander. A statistical-mechanical approach to data assimilation for nonlinear dynamics ii. Evolution approximations. Journal of Statistical Physics, 2006. Accepted.
+Gregory L. Eyink, Juan L. Restrepo, and Francis J. Alexander. A mean field approximation in data assimilation for nonlinear dynamics. Physica D, 194:347­368, 2004.
+Andrew Golightly and Darren J. Wilkinson. Bayesian sequential inference for nonlinear multivariate diffusions. Statistics and Computing, 2006. To appear.
+George J. Haltiner and Roger T. Williams. Numerical Prediction and Dynamic Meteorology. John Wiley and Sons, Chichester, 1980.
+Tommi Jaakkola. Tutorial on variational approximation methods. In Manfred Opper and David Saad, editors, Advanced Mean Field Methods: Theory and Practice. The MIT Press, 2001.
+Eugenia Kalnay. Atmospheric modeling, data assimilation and predictability. Cambridge University Press, Cambridge, 2003.
+Peter E. Kloeden and Eckhard Platen. Numerical Solution of Stochastic Differential Equations. Springer-Verlag, Berlin, 1992.
+S. Kullback and R. A. Leibler. On information and sufficiency. Annals of Mathematical Statistics, 22(1):79­86, 1951.
+Robert N. Miller, Michael Ghil, and Francois Gauthiez. Advanced data assimilation in strongly nonlinear dynamical systems. Journal of the Atmospheric Sciences, 51:1037­ 1056, 1994.
+Carl E. Rasmussen and Christopher K. I. Williams. Gaussian Processes for Machine Learning. The MIT Press, Cambridge, Massachusetts, 2006.
+H. Risken. The Fokker-Planck equation: methods of solutions and applications. SpringerVerlag, Berlin, 1989.
+Matthias Seeger. Gaussian processes for Machine Learning. International Journal of Neural Systems, 14(2):1­38, 2004.
+Matthias Seeger, Neil Lawrence, and Ralf Herbrich. Efficient nonparametric Bayesian modelling with sparse Gaussian process approximations. Submitted for Journal Publication (2007).
+Rita Seiffert, Richard Blender, and Klaus Fraedrich. Subscale forcing in a global atmospheric circulation model and stochastic parameterisation. Quarterly Journal of the Royal Meteorological Society, 2006. accepted.
+15
+
+Archambeau, Cornford, Opper and Shawe-Taylor G. E. Uhlenbeck and L. S. Ornstein. On the theory of Brownian motion. Physical Review,
+36:823­841, 1930. Jeffrey S. Whitaker and Thomas M. Hamill. Ensemble data assimilation without perturbed
+observations. Monthly Weather Review, 130:1913­1924, 2002. John Winn. Variational Message Passing and its Applications. PhD thesis, Department of
+Physics, University of Cambridge, UK, 2003.
+16
+
+
